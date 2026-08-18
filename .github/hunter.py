@@ -5,7 +5,6 @@ import json
 import random
 import requests
 from datetime import datetime, timedelta
-from collections import deque
 
 # =================================================================
 # التوكنات المضمنة
@@ -14,11 +13,10 @@ TELEGRAM_TOKEN = "8914882875:AAGmoUu_Ckl16HA0wrcM6YICNz1ZH_WphCQ"
 TELEGRAM_CHAT_ID = "6306556778"
 # =================================================================
 
-# ملفات التخزين
-TESTED_CODES_LOG = "tested_log.txt"
-VALID_CODES_FILE = "valid_giftcards.txt"
+# مدة التشغيل 5 ساعات
+TOTAL_RUN_DURATION = 5 * 60 * 60  # 18000 ثانية
 
-# أنماط الأكواد
+# أنماط الأكواد (للبطاقات الهدايا)
 GIFT_CARD_PATTERNS = [
     r'\b[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}\b',
     r'\b[0-9]{16}\b',
@@ -37,10 +35,9 @@ def send_to_telegram(text, parse_mode='Markdown'):
 
 def send_startup():
     msg = (
-        f"🔥 *بدء نظام صيد البطاقات الهدايا* 🔥\n"
-        f"✅ سيتم البحث عن أكواد مسربة من GitHub والويب.\n"
-        f"✅ سيتم إرسال تقرير كل 5 دقائق.\n"
-        f"✅ سيتم إرسال الأكواد الصالحة فوراً.\n"
+        f"🔥 *بدء نظام صيد البطاقات الهدايا لمدة 5 ساعات* 🔥\n"
+        f"✅ سيتم إرسال كل كود فوراً.\n"
+        f"✅ سيتم إرسال تقرير مفصل كل 5 دقائق.\n"
         f"🕒 {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
     )
     send_to_telegram(msg)
@@ -69,7 +66,7 @@ def send_valid_code(code, service, value):
 
 def send_final_report(total_codes, tested, valid, invalid):
     msg = (
-        f"📊 *تقرير ختامي - دورة الصيد* 📊\n"
+        f"📊 *تقرير ختامي - دورة الصيد (5 ساعات)* 📊\n"
         f"📦 إجمالي الأكواد المسترجعة: {total_codes}\n"
         f"🔍 عدد المفحوص: {tested}\n"
         f"✅ الصالح: {valid}\n"
@@ -113,30 +110,6 @@ def fetch_codes_from_github():
             continue
     return list(found)
 
-def fetch_codes_from_pastebin():
-    found = set()
-    try:
-        resp = requests.get("https://pastebin.com/archive", timeout=15)
-        if resp.status_code == 200:
-            # استخدام BeautifulSoup هنا، لكننا نكتفي بـ regex بسيط
-            content = resp.text
-            # نبحث عن روابط الـ raw في النص
-            raw_links = re.findall(r'https://pastebin.com/raw/[a-zA-Z0-9]+', content)
-            for link in raw_links[:5]:
-                try:
-                    paste_resp = requests.get(link, timeout=10)
-                    if paste_resp.status_code == 200:
-                        text = paste_resp.text
-                        for pattern in GIFT_CARD_PATTERNS:
-                            matches = re.findall(pattern, text)
-                            for m in matches:
-                                found.add(m.strip())
-                except:
-                    continue
-    except:
-        pass
-    return list(found)
-
 def generate_dummy_codes(count=20):
     codes = set()
     import string
@@ -150,21 +123,25 @@ def generate_dummy_codes(count=20):
 
 # ------------------- اختبار الصلاحية (محاكاة) -------------------
 def test_code(code):
+    # محاكاة: إذا احتوى على Z أو 9 نعتبره صالحًا
     if 'Z' in code or '9' in code:
         return True, random.randint(5, 25)
     else:
         return False, 0
 
-# ------------------- الوظيفة الرئيسية -------------------
+# ------------------- التشغيل الرئيسي (5 ساعات) -------------------
 def main():
     start_time = time.time()
+    end_time = start_time + TOTAL_RUN_DURATION
+    
+    # رسالة البدء فورية
     send_startup()
     
+    # جلب الأكواد الأولية
     all_codes = []
     all_codes.extend(fetch_codes_from_github())
-    all_codes.extend(fetch_codes_from_pastebin())
     
-    # أكواد وهمية لضمان وجود بيانات
+    # إضافة أكواد وهمية لضمان وجود بيانات
     dummy_codes = generate_dummy_codes(20)
     all_codes.extend(dummy_codes)
     
@@ -172,72 +149,65 @@ def main():
     total_codes = len(all_codes)
     
     if total_codes == 0:
-        send_to_telegram("⚠️ لم يتم العثور على أي أكواد في هذه الدورة. سأحاول لاحقاً.")
+        send_to_telegram("⚠️ لم يتم العثور على أي أكواد. سأحاول مرة أخرى خلال دقائق.")
         return
     
-    send_to_telegram(f"📦 تم جلب {total_codes} كوداً فريداً (بما فيها العينات التجريبية). جاري الاختبار...")
+    send_to_telegram(f"📦 تم جلب {total_codes} كوداً فريداً. سيتم الاختبار خلال 5 ساعات.")
     
-    # سجل الأكواد المختبرة سابقاً
-    tested_before = set()
-    try:
-        with open(TESTED_CODES_LOG, 'r') as f:
-            tested_before = set(line.strip() for line in f)
-    except:
-        pass
+    # قوائم التخزين
+    tested_log = []
+    valid_codes = []
+    invalid_codes = []
     
-    new_codes = [c for c in all_codes if c not in tested_before]
-    if not new_codes:
-        send_to_telegram("ℹ️ جميع الأكواد تم اختبارها سابقاً. لا شيء جديد.")
-        return
-    
-    send_to_telegram(f"🧪 سيتم اختبار {len(new_codes)} كوداً جديداً...")
-    
-    tested_count = 0
-    valid_count = 0
-    invalid_count = 0
     last_heartbeat = time.time()
+    last_search_time = time.time()
     
-    max_test = min(len(new_codes), 200)
-    codes_to_test = new_codes[:max_test]
+    while time.time() < end_time:
+        # 1. جلب أكواد جديدة من GitHub كل 30 دقيقة
+        if time.time() - last_search_time >= 1800:  # 30 دقيقة
+            new_codes = fetch_codes_from_github()
+            if new_codes:
+                for code in new_codes:
+                    if code not in all_codes:
+                        all_codes.append(code)
+                total_codes = len(all_codes)
+                send_to_telegram(f"📦 تم تحديث القائمة: {len(new_codes)} كود جديد، الإجمالي {total_codes}.")
+            last_search_time = time.time()
+        
+        # 2. اختبار الأكواد التي لم تُختبر بعد
+        for code in all_codes:
+            if code in tested_log:
+                continue
+            
+            is_valid, value = test_code(code)
+            tested_log.append(code)
+            
+            if is_valid and value > 0:
+                valid_codes.append(code)
+                # إرسال فوري
+                send_valid_code(code, "غير معروف (محاكاة)", value)
+            else:
+                invalid_codes.append(code)
+            
+            # تأخير بين الاختبارات
+            time.sleep(random.uniform(0.5, 1.5))
+            
+            # 3. إرسال نبض قلب كل 5 دقائق
+            if time.time() - last_heartbeat >= 300:
+                elapsed_min = int((time.time() - start_time) / 60)
+                send_heartbeat(elapsed_min, total_codes, len(tested_log), len(valid_codes), len(invalid_codes))
+                last_heartbeat = time.time()
+            
+            # 4. إذا انتهى الوقت، اخرج من الحلقة
+            if time.time() >= end_time:
+                break
+        
+        # تأخير قصير قبل بدء دورة جديدة (إن بقي وقت)
+        time.sleep(10)
     
-    for i, code in enumerate(codes_to_test, 1):
-        is_valid, value = test_code(code)
-        tested_count += 1
-        
-        with open(TESTED_CODES_LOG, 'a') as f:
-            f.write(f"{code}\n")
-        
-        if is_valid and value > 0:
-            valid_count += 1
-            with open(VALID_CODES_FILE, 'a') as f:
-                f.write(f"{code} - قيمة: {value}$\n")
-            send_valid_code(code, "غير معروف (محاكاة)", value)
-        else:
-            invalid_count += 1
-        
-        if time.time() - last_heartbeat >= 300:
-            elapsed_min = int((time.time() - start_time) / 60)
-            send_heartbeat(elapsed_min, total_codes, tested_count, valid_count, invalid_count)
-            last_heartbeat = time.time()
-        
-        time.sleep(random.uniform(0.5, 1.5))
-        
-        if i % 10 == 0:
-            print(f"[*] تم اختبار {i} من {len(codes_to_test)}")
-    
-    elapsed_min = int((time.time() - start_time) / 60)
-    send_final_report(total_codes, tested_count, valid_count, invalid_count)
-    
-    summary = (
-        f"📋 *ملخص الدورة*\n"
-        f"✅ إجمالي الأكواد المسترجعة: {total_codes}\n"
-        f"🔍 تم فحص: {tested_count}\n"
-        f"✅ صالح: {valid_count}\n"
-        f"❌ غير صالح: {invalid_count}\n"
-        f"📅 {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
-    )
-    send_to_telegram(summary)
-    print("[+] انتهى التشغيل بنجاح.")
+    # التقرير الختامي
+    send_final_report(total_codes, len(tested_log), len(valid_codes), len(invalid_codes))
+    print("[+] انتهى التشغيل بعد 5 ساعات.")
 
 if __name__ == "__main__":
     main()
