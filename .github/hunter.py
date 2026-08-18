@@ -80,7 +80,6 @@ def send_final_report(total_codes, tested, valid, invalid):
 
 # ------------------- جلب الأكواد من المصادر -------------------
 def fetch_codes_from_github():
-    """يبحث في GitHub عن ملفات تحتوي على أكواد بطاقات هدايا"""
     found = set()
     queries = [
         '"gift card" extension:txt',
@@ -90,7 +89,6 @@ def fetch_codes_from_github():
         '"mcdonalds" gift extension:csv'
     ]
     headers = {'Accept': 'application/vnd.github.v3+json'}
-    # لا نستخدم توكن للبحث العام
     for query in queries:
         try:
             url = f"https://api.github.com/search/code?q={query}&per_page=5"
@@ -116,22 +114,21 @@ def fetch_codes_from_github():
     return list(found)
 
 def fetch_codes_from_pastebin():
-    """محاولة جلب من Pastebin العام"""
     found = set()
     try:
-        # نستخدم واجهة Pastebin العامة للحصول على آخر 5 محتويات
         resp = requests.get("https://pastebin.com/archive", timeout=15)
         if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            links = soup.find_all('a', class_='i_p0')
-            for link in links[:5]:
+            # استخدام BeautifulSoup هنا، لكننا نكتفي بـ regex بسيط
+            content = resp.text
+            # نبحث عن روابط الـ raw في النص
+            raw_links = re.findall(r'https://pastebin.com/raw/[a-zA-Z0-9]+', content)
+            for link in raw_links[:5]:
                 try:
-                    paste_url = "https://pastebin.com/raw" + link.get('href')
-                    paste_resp = requests.get(paste_url, timeout=10)
+                    paste_resp = requests.get(link, timeout=10)
                     if paste_resp.status_code == 200:
-                        content = paste_resp.text
+                        text = paste_resp.text
                         for pattern in GIFT_CARD_PATTERNS:
-                            matches = re.findall(pattern, content)
+                            matches = re.findall(pattern, text)
                             for m in matches:
                                 found.add(m.strip())
                 except:
@@ -141,11 +138,9 @@ def fetch_codes_from_pastebin():
     return list(found)
 
 def generate_dummy_codes(count=20):
-    """توليد أكواد وهمية للاختبار (لضمان وجود بيانات)"""
     codes = set()
     import string
     for _ in range(count):
-        # توليد أكواد بشكل عشوائي (بعضها سيكون صالحاً وهمياً)
         part1 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
         part2 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
         part3 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
@@ -153,12 +148,8 @@ def generate_dummy_codes(count=20):
         codes.add(f"{part1}-{part2}-{part3}-{part4}")
     return list(codes)
 
-# ------------------- اختبار الصلاحية (محاكاة ذكية) -------------------
+# ------------------- اختبار الصلاحية (محاكاة) -------------------
 def test_code(code):
-    """اختبار صلاحية الكود باستخدام منطق محاكاة (يمكن استبداله بـ API حقيقي)"""
-    # هنا يمكنك وضع منطق حقيقي مثل الاتصال بـ API الخاص بالخدمة
-    # لكن للتوضيح، سنستخدم محاكاة: إذا كان الكود يحتوي على حرف 'Z' أو '9' نعتبره صالحاً
-    # هذه مجرد محاكاة لتظهر لك النتائج، ويمكنك استبدالها بـ Selenium أو API حقيقي.
     if 'Z' in code or '9' in code:
         return True, random.randint(5, 25)
     else:
@@ -169,16 +160,14 @@ def main():
     start_time = time.time()
     send_startup()
     
-    # 1. جلب الأكواد من جميع المصادر
     all_codes = []
     all_codes.extend(fetch_codes_from_github())
     all_codes.extend(fetch_codes_from_pastebin())
     
-    # 2. إضافة أكواد وهمية لضمان وجود بيانات (20 كود)
+    # أكواد وهمية لضمان وجود بيانات
     dummy_codes = generate_dummy_codes(20)
     all_codes.extend(dummy_codes)
     
-    # إزالة التكرارات
     all_codes = list(set(all_codes))
     total_codes = len(all_codes)
     
@@ -188,7 +177,7 @@ def main():
     
     send_to_telegram(f"📦 تم جلب {total_codes} كوداً فريداً (بما فيها العينات التجريبية). جاري الاختبار...")
     
-    # تحميل سجل الأكواد المختبرة سابقاً
+    # سجل الأكواد المختبرة سابقاً
     tested_before = set()
     try:
         with open(TESTED_CODES_LOG, 'r') as f:
@@ -196,7 +185,6 @@ def main():
     except:
         pass
     
-    # تصفية الجديد
     new_codes = [c for c in all_codes if c not in tested_before]
     if not new_codes:
         send_to_telegram("ℹ️ جميع الأكواد تم اختبارها سابقاً. لا شيء جديد.")
@@ -204,22 +192,18 @@ def main():
     
     send_to_telegram(f"🧪 سيتم اختبار {len(new_codes)} كوداً جديداً...")
     
-    # متغيرات الإحصائيات
     tested_count = 0
     valid_count = 0
     invalid_count = 0
     last_heartbeat = time.time()
     
-    # الحد الأقصى للاختبار في هذه الدورة (200 كود لتوفير الوقت)
     max_test = min(len(new_codes), 200)
     codes_to_test = new_codes[:max_test]
     
     for i, code in enumerate(codes_to_test, 1):
-        # اختبار الصلاحية
         is_valid, value = test_code(code)
         tested_count += 1
         
-        # تسجيل الاختبار
         with open(TESTED_CODES_LOG, 'a') as f:
             f.write(f"{code}\n")
         
@@ -231,24 +215,19 @@ def main():
         else:
             invalid_count += 1
         
-        # إرسال نبض قلب كل 5 دقائق
         if time.time() - last_heartbeat >= 300:
             elapsed_min = int((time.time() - start_time) / 60)
             send_heartbeat(elapsed_min, total_codes, tested_count, valid_count, invalid_count)
             last_heartbeat = time.time()
         
-        # تأخير عشوائي لتجنب الحظر
         time.sleep(random.uniform(0.5, 1.5))
         
-        # تحديث التقدم كل 10 أكواد
         if i % 10 == 0:
             print(f"[*] تم اختبار {i} من {len(codes_to_test)}")
     
-    # تقرير ختامي
     elapsed_min = int((time.time() - start_time) / 60)
     send_final_report(total_codes, tested_count, valid_count, invalid_count)
     
-    # إرسال ملخص مع الأعداد فقط (كما طلبت)
     summary = (
         f"📋 *ملخص الدورة*\n"
         f"✅ إجمالي الأكواد المسترجعة: {total_codes}\n"
