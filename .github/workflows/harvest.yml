@@ -1,0 +1,23 @@
+name: Auto_GiftCard_Hunter
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # كل 6 ساعات
+  workflow_dispatch:
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180     # 3 ساعات كافية للجلب والاختبار
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |
+        pip install requests selenium beautifulsoup4
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-driver
+    - name: Run Auto Hunter
+      run: python hunter.py
