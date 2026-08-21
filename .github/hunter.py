@@ -1,5 +1,5 @@
-import sys, re, time, random, requests
-from datetime import datetime
+#import sys, re, time, random, requests
+#from datetime import datetime
 
 TELEGRAM_TOKEN = "8914882875:AAGmoUu_Ckl16HA0wrcM6YICNz1ZH_WphCQ"
 TELEGRAM_CHAT_ID = "6306556778"
